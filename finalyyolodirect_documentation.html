@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Source Code Documentation — Final YOLO Direct</title>
+<style>
+:root {
+  color-scheme: light;
+  --ink: #1d2733; --muted: #5b6775; --line: #dce2e8;
+  --panel: #f5f7fa; --accent: #2459a9; --white: #fff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.6 system-ui, -apple-system, Segoe UI, sans-serif; color: var(--ink); background: #eef2f6; }
+header { background: #183153; color: white; padding: 2.4rem max(1.25rem, calc((100vw - 1050px)/2)); }
+header h1 { margin: 0 0 .4rem; font-size: clamp(1.8rem, 4vw, 2.7rem); }
+header p { margin: .25rem 0; color: #e0e8f2; }
+main { max-width: 1050px; margin: 1.5rem auto; padding: 0 1rem 3rem; }
+nav, article { background: var(--white); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+h2 { margin-top: 0; border-bottom: 1px solid var(--line); padding-bottom: .45rem; }
+h3 { margin-bottom: .4rem; }
+p, li { max-width: 90ch; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+code { background: var(--panel); padding: .1rem .25rem; border-radius: 4px; }
+pre { overflow: auto; max-height: 75vh; background: #111827; color: #e5e7eb; padding: 1rem; border-radius: 8px; font-size: .86rem; line-height: 1.5; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; }
+.card, .function { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; }
+.card h3 { margin-top: 0; }
+.small { color: var(--muted); font-size: .92rem; }
+.warning { border-left: 4px solid #c17a11; background: #fff8e8; padding: .8rem 1rem; border-radius: 5px; }
+footer { color: var(--muted); text-align: center; font-size: .9rem; padding: 1rem; }
+@media print { body { background: white; } nav { display: none; } article { break-inside: avoid; } pre { white-space: pre-wrap; max-height: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Source Code Documentation</h1>
+  <p><strong>Project:</strong> Meat-packaging defect detection using YOLOv8</p>
+  <p><strong>Source file:</strong> finalyyolodirect.py</p>
+  <p>Generated from the uploaded source file. This page documents the code structure; it does not execute or validate the training pipeline.</p>
+</header>
+<main>
+<nav>
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#overview">Project overview</a></li>
+    <li><a href="#workflow">Execution workflow</a></li>
+    <li><a href="#configuration">Configuration and class mapping</a></li>
+    <li><a href="#functions">Function reference</a></li>
+    <li><a href="#metrics">Evaluation metrics</a></li>
+    <li><a href="#notes">Implementation notes</a></li>
+    <li><a href="#source">Source code appendix</a></li>
+  </ul>
+</nav>
+
+<article id="overview">
+  <h2>1. Project overview</h2>
+  <p>This script prepares a labelled image dataset for YOLO object detection, trains a YOLOv8 nano model, evaluates the trained model on a test split, saves annotated prediction images, and calculates additional defect-level and package-level results.</p>
+  <div class="grid">
+    <div class="card"><h3>Detection classes</h3><p>Loose meat, twisted meat, unsealed packaging, and wrinkle.</p></div>
+    <div class="card"><h3>Model</h3><p><code>YOLO("yolov8n.pt")</code>, trained with a maximum of 50 epochs, image size 640, batch size 16, and patience 10.</p></div>
+    <div class="card"><h3>Annotation input</h3><p>CSV rows containing image filenames, image dimensions, class names, and bounding-box coordinates.</p></div>
+    <div class="card"><h3>Output</h3><p>YOLO dataset files, a YAML configuration, trained weights, test metrics, prediction images, and package-level statistics.</p></div>
+  </div>
+</article>
+
+<article id="workflow">
+  <h2>2. Execution workflow</h2>
+  <ol>
+    <li>Mount Google Drive and import required libraries.</li>
+    <li>Set dataset, output, and model-run paths.</li>
+    <li>Define defect class names and aliases that map CSV labels to integer class IDs.</li>
+    <li>Find each split's CSV annotation file and validate required columns.</li>
+    <li>Group bounding boxes by image and create a training/validation split from the annotated training images.</li>
+    <li>Copy images into a YOLO directory structure and write normalised YOLO label text files.</li>
+    <li>Write <code>data.yaml</code> with train, validation, test paths and class names.</li>
+    <li>Train YOLOv8n and load the resulting <code>best.pt</code> weights.</li>
+    <li>Evaluate the model on the test split and print precision, recall, mAP@50 and mAP@50–95.</li>
+    <li>Save test-image predictions and calculate per-class recall and package-level faulty/error-free accuracy.</li>
+  </ol>
+</article>
+
+<article id="configuration">
+  <h2>3. Configuration and class mapping</h2>
+  <ul>
+    <li><code>BASE_DIR</code>: Google Drive project directory, <code>/content/drive/MyDrive/Colab Notebooks/3001</code>.</li>
+    <li><code>TRAIN_DIR</code>: source training folder.</li>
+    <li><code>TEST_DIR</code>: source test folder.</li>
+    <li><code>YOLO_DATASET</code>: generated dataset root, <code>/content/yolo_dataset</code>.</li>
+    <li><code>RUNS_DIR</code>: training/evaluation output directory, <code>yolo_original_results</code> under the project folder.</li>
+    <li><code>IMAGE_EXTS</code>: accepted source image extensions include JPG, JPEG, PNG, BMP and WEBP.</li>
+    <li><code>CONF_THRESHOLD</code>: confidence threshold of 0.25 for prediction-based package decisions.</li>
+  </ul>
+  <p>The class IDs are: <code>0 = loose-meat</code>, <code>1 = twisted-meat</code>, <code>2 = unsealed</code>, and <code>3 = wrinkle</code>. <code>CLASS_ALIASES</code> accepts several alternative CSV label spellings.</p>
+</article>
+
+<article id="functions">
+  <h2>4. Function reference</h2>
+  <p>The following functions are defined in the uploaded source file.</p>
+  
+        <section class="function">
+          <h3><code>find_csv(folder)</code></h3>
+          <p>Finds the single CSV file in a given directory. Args: folder (Path): The directory to search for a CSV file. Returns: Path: The path to the found CSV file. Raises: ValueError: If there is not exactly one CSV file in the directory.</p>
+        </section>
+        
+        <section class="function">
+          <h3><code>convert_split(source_dir, split_name, csv_path=None)</code></h3>
+          <p>Converts annotations from a source directory CSV structure into YOLO format. Args: source_dir (Path): The directory containing the source images and CSV file. split_name (str): The name of the split (&#x27;train&#x27; or &#x27;test&#x27;). csv_path (Path, optional): Path to the CSV file. If None, it will be searched in source_dir. Returns: None</p>
+        </section>
+        
+        <section class="function">
+          <h3><code>find_csv(folder)</code></h3>
+          <p>No docstring is provided in the source file.</p>
+        </section>
+        
+</article>
+
+<article id="metrics">
+  <h2>5. Evaluation metrics</h2>
+  <ul>
+    <li><strong>Precision:</strong> proportion of predicted detections that are correct under the evaluation matching rules.</li>
+    <li><strong>Recall:</strong> proportion of annotated defect instances detected by the model.</li>
+    <li><strong>mAP@50:</strong> mean Average Precision at IoU threshold 0.50.</li>
+    <li><strong>mAP@50–95:</strong> mean Average Precision averaged across IoU thresholds from 0.50 to 0.95.</li>
+    <li><strong>Per-class recall:</strong> recall reported for each defect category when that class has evaluated test instances.</li>
+    <li><strong>Package-level accuracy:</strong> percentage of evaluated images where the predicted faulty/error-free status matches the status derived from annotations.</li>
+  </ul>
+</article>
+
+<article id="notes">
+  <h2>6. Implementation notes and checks</h2>
+  <div class="warning">
+    <strong>Validation-split detail:</strong> the script creates the validation split from the annotated images in <code>TRAIN_DIR</code>; it does not use a separate <code>valid</code> folder in the conversion calls shown in this source.
+  </div>
+  <ul>
+    <li>The script deletes the existing <code>/content/yolo_dataset</code> directory before rebuilding it.</li>
+    <li>The CSV must have exactly the expected annotation columns, including <code>filename</code>, <code>width</code>, <code>height</code>, <code>class</code>, <code>xmin</code>, <code>ymin</code>, <code>xmax</code>, and <code>ymax</code>.</li>
+    <li>The package-level calculation treats images without a CSV annotation row as error-free. This is only valid if the CSV represents all faulty test images and unannotated images truly are defect-free.</li>
+    <li>The package-level evaluation image list currently includes JPG, JPEG and PNG files directly inside the test directory; nested images and BMP/WEBP files are not included in that particular list.</li>
+    <li>Class-level recall and AP are different measures. The per-class section prints recall, while the standard YOLO evaluation also provides per-class AP data.</li>
+    <li>Generated HTML documentation describes the uploaded source; it does not confirm that the code runs successfully in the user's Colab environment.</li>
+  </ul>
+</article>
+
+<article id="source">
+  <h2>7. Source code appendix</h2>
+  <p class="small">Complete source text as uploaded. Colab-specific commands are shown as text and are not executed by this documentation page.</p>
+  <details>
+    <summary>Show full source code (430 lines)</summary>
+    <pre><code># -*- coding: utf-8 -*-
+&quot;&quot;&quot;FinalyYoloDirect.ipynb
+
+Automatically generated by Colab.
+
+Original file is located at
+    https://colab.research.google.com/drive/1XJov40Bpfcn87thjcre4UGdl9jw6vQE1
+&quot;&quot;&quot;
+
+from google.colab import drive
+drive.mount(&#x27;/content/drive&#x27;)
+
+!pip install -q ultralytics pandas pyyaml
+import os
+import cv2
+import matplotlib.pyplot as plt
+DATA_ROOT = &quot;/content/drive/MyDrive/Colab Notebooks/3001&quot;
+
+for folder in [&quot;train&quot;, &quot;valid&quot;, &quot;test&quot;]:
+    path = os.path.join(DATA_ROOT, folder)
+    print(folder, os.path.isdir(path), path)
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import shutil
+import yaml
+import torch
+from ultralytics import YOLO
+
+BASE_DIR = Path(&quot;/content/drive/MyDrive/Colab Notebooks/3001&quot;)
+
+TRAIN_DIR = BASE_DIR / &quot;train&quot;
+TEST_DIR = BASE_DIR / &quot;test&quot;
+
+# Generated dataset and model outputs
+YOLO_DATASET = Path(&quot;/content/yolo_dataset&quot;)
+RUNS_DIR = BASE_DIR / &quot;yolo_original_results&quot;
+
+print(&quot;GPU available:&quot;, torch.cuda.is_available())
+print(&quot;Training folder exists:&quot;, TRAIN_DIR.exists())
+print(&quot;Test folder exists:&quot;, TEST_DIR.exists())
+
+import random
+
+random.seed(42)
+np.random.seed(42)
+
+CLASS_NAMES = [
+    &quot;loose-meat&quot;,
+    &quot;twisted-meat&quot;,
+    &quot;unsealed&quot;,
+    &quot;wrinkle&quot;
+]
+
+# Map CSV class labels to IDs 0–3.
+# Adjust aliases below to match the exact labels in your CSV.
+CLASS_ALIASES = {
+    &quot;loose-meat&quot;: 0,
+    &quot;loose_meat&quot;: 0,
+    &quot;loose&quot;: 0,
+    &quot;twisted-meat&quot;: 1,
+    &quot;twisted_meat&quot;: 1,
+    &quot;twisted&quot;: 1,
+    &quot;unsealed&quot;: 2,
+    &quot;unsealed packaging&quot;: 2,
+    &quot;unsealed_packaging&quot;: 2,
+    &quot;packaging-error&quot;: 2,
+    &quot;wrinkled&quot;: 3,
+    &quot;wrinkled_meat&quot;: 3,
+    &quot;wrinkle&quot;: 3
+}
+
+IMAGE_EXTS = {&quot;.jpg&quot;, &quot;.jpeg&quot;, &quot;.png&quot;, &quot;.bmp&quot;, &quot;.webp&quot;}
+
+def find_csv(folder):
+    &quot;&quot;&quot;Finds the single CSV file in a given directory.
+
+    Args:
+        folder (Path): The directory to search for a CSV file.
+
+    Returns:
+        Path: The path to the found CSV file.
+
+    Raises:
+        ValueError: If there is not exactly one CSV file in the directory.
+    &quot;&quot;&quot;
+    csvs = list(folder.glob(&quot;*.csv&quot;))
+    if len(csvs) != 1:
+        raise ValueError(
+            f&quot;Expected exactly one CSV in {folder}, found: {[p.name for p in csvs]}&quot;
+        )
+    return csvs[0]
+
+def convert_split(source_dir, split_name, csv_path=None):
+    &quot;&quot;&quot;Converts annotations from a source directory CSV structure into YOLO format.
+
+    Args:
+        source_dir (Path): The directory containing the source images and CSV file.
+        split_name (str): The name of the split (&#x27;train&#x27; or &#x27;test&#x27;).
+        csv_path (Path, optional): Path to the CSV file. If None, it will be searched in source_dir.
+
+    Returns:
+        None
+    &quot;&quot;&quot;
+    csv_path = csv_path or find_csv(source_dir)
+    df = pd.read_csv(csv_path)
+
+    required = {
+        &quot;filename&quot;, &quot;width&quot;, &quot;height&quot;, &quot;class&quot;,
+        &quot;xmin&quot;, &quot;ymin&quot;, &quot;xmax&quot;, &quot;ymax&quot;
+    }
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f&quot;Missing CSV columns in {csv_path.name}: {missing}&quot;)
+
+    # Look up image files by filename.
+    image_lookup = {
+        p.name: p for p in source_dir.rglob(&quot;*&quot;)
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+    }
+
+    # Group all bounding boxes belonging to each image.
+    grouped = {
+        str(name): group
+        for name, group in df.groupby(&quot;filename&quot;)
+    }
+
+    # Keep annotated images together when making a validation split.
+    filenames = sorted(grouped.keys())
+    random.Random(42).shuffle(filenames)
+
+    if split_name == &quot;train&quot;:
+        if len(filenames) &lt; 2:
+            raise ValueError(&quot;Need at least two annotated training images.&quot;)
+        n_val = max(1, round(0.2 * len(filenames)))
+        val_names = set(filenames[:n_val])
+        train_names = set(filenames[n_val:])
+        assignments = [
+            (&quot;train&quot;, train_names),
+            (&quot;val&quot;, val_names)
+        ]
+    else:
+        assignments = [(split_name, set(filenames))]
+
+    for target_split, names in assignments:
+        img_out = YOLO_DATASET / &quot;images&quot; / target_split
+        lbl_out = YOLO_DATASET / &quot;labels&quot; / target_split
+        img_out.mkdir(parents=True, exist_ok=True)
+        lbl_out.mkdir(parents=True, exist_ok=True)
+
+        for filename in names:
+            if filename not in image_lookup:
+                print(f&quot;WARNING: Image not found, skipping: {filename}&quot;)
+                continue
+
+            group = grouped[filename]
+            src = image_lookup[filename]
+            dst = img_out / src.name
+            shutil.copy2(src, dst)
+
+            # Write one YOLO label file per image.
+            lines = []
+            for _, row in group.iterrows():
+                raw_class = str(row[&quot;class&quot;]).strip().lower()
+                if raw_class not in CLASS_ALIASES:
+                    raise ValueError(
+                        f&quot;Unknown class &#x27;{row[&#x27;class&#x27;]}&#x27; in {csv_path.name}. &quot;
+                        &quot;Add it to CLASS_ALIASES.&quot;
+                    )
+
+                class_id = CLASS_ALIASES[raw_class]
+                width = float(row[&quot;width&quot;])
+                height = float(row[&quot;height&quot;])
+
+                xmin = float(row[&quot;xmin&quot;])
+                ymin = float(row[&quot;ymin&quot;])
+                xmax = float(row[&quot;xmax&quot;])
+                ymax = float(row[&quot;ymax&quot;])
+
+                if width &lt;= 0 or height &lt;= 0:
+                    raise ValueError(f&quot;Invalid image dimensions for {filename}&quot;)
+
+                # YOLO uses normalised centre coordinates and box dimensions.
+                x_center = ((xmin + xmax) / 2) / width
+                y_center = ((ymin + ymax) / 2) / height
+                box_width = (xmax - xmin) / width
+                box_height = (ymax - ymin) / height
+
+                # Check coordinates are valid.
+                if not (0 &lt;= x_center &lt;= 1 and 0 &lt;= y_center &lt;= 1
+                        and 0 &lt; box_width &lt;= 1 and 0 &lt; box_height &lt;= 1):
+                    raise ValueError(
+                        f&quot;Invalid bounding box in {filename}: &quot;
+                        f&quot;{xmin, ymin, xmax, ymax}&quot;
+                    )
+
+                lines.append(
+                     f&quot;{class_id} {x_center:.6f} {y_center:.6f} &quot;
+                     f&quot;{box_width:.6f} {box_height:.6f}&quot;
+                )
+
+            (lbl_out / f&quot;{src.stem}.txt&quot;).write_text(
+                &quot;\n&quot;.join(lines), encoding=&quot;utf-8&quot;
+            )
+
+    print(f&quot;Converted annotations from {csv_path}&quot;)
+
+# Start clean so old generated labels cannot contaminate this run.
+if YOLO_DATASET.exists():
+    shutil.rmtree(YOLO_DATASET)
+
+convert_split(TRAIN_DIR, &quot;train&quot;)
+convert_split(TEST_DIR, &quot;test&quot;)
+
+# Write YOLO dataset configuration.
+data_config = {
+    &quot;path&quot;: str(YOLO_DATASET),
+    &quot;train&quot;: &quot;images/train&quot;,
+    &quot;val&quot;: &quot;images/val&quot;,
+    &quot;test&quot;: &quot;images/test&quot;,
+    &quot;names&quot;: {i: name for i, name in enumerate(CLASS_NAMES)}
+}
+
+config_path = YOLO_DATASET / &quot;data.yaml&quot;
+with open(config_path, &quot;w&quot;) as f:
+    yaml.safe_dump(data_config, f, sort_keys=False)
+
+print(&quot;\nDataset configuration:&quot;)
+print(config_path.read_text())
+
+model = YOLO(&quot;yolov8n.pt&quot;)
+
+train_results = model.train(
+    data=str(config_path),
+    epochs=50,
+    imgsz=640,
+    batch=16,
+    patience=10,
+    project=str(RUNS_DIR),
+    name=&quot;original_images&quot;,
+    exist_ok=True,
+    plots=True,
+    seed=42
+)
+
+best_model_path = RUNS_DIR / &quot;original_images&quot; / &quot;weights&quot; / &quot;best.pt&quot;
+best_model = YOLO(str(best_model_path))
+
+test_results = best_model.val(
+    data=str(config_path),
+    split=&quot;test&quot;,
+    imgsz=640,
+    batch=16,
+    plots=True,
+    project=str(RUNS_DIR),
+    name=&quot;original_test&quot;,
+    exist_ok=True
+)
+
+print(&quot;\nTest results&quot;)
+print(f&quot;mAP50:     {test_results.box.map50 * 100:.2f}%&quot;)
+print(f&quot;mAP50-95:  {test_results.box.map * 100:.2f}%&quot;)
+print(f&quot;Precision: {test_results.box.mp * 100:.2f}%&quot;)
+print(f&quot;Recall:    {test_results.box.mr * 100:.2f}%&quot;)
+
+prediction_dir = RUNS_DIR / &quot;test_predictions&quot;
+
+best_model.predict(
+    source=str(YOLO_DATASET / &quot;images&quot; / &quot;test&quot;),
+    imgsz=640,
+    conf=0.25,
+    save=True,
+    project=str(prediction_dir),
+    name=&quot;predictions&quot;,
+    exist_ok=True
+)
+
+print(&quot;Predictions saved in:&quot;, prediction_dir / &quot;predictions&quot;)
+
+from pathlib import Path
+import pandas as pd
+
+# Fallback definition in case setup cells haven&#x27;t been run in this session
+if &#x27;TEST_DIR&#x27; not in globals():
+    BASE_DIR = Path(&quot;/content/drive/MyDrive/Colab Notebooks/3001&quot;)
+    TEST_DIR = BASE_DIR / &quot;test&quot;
+
+class_names = [
+    &quot;Loose meat&quot;,
+    &quot;Twisted meat&quot;,
+    &quot;Unsealed packaging&quot;,
+    &quot;Wrinkled meat&quot;
+]
+
+CONF_THRESHOLD = 0.25
+
+# ------------------------------------------------------------
+# 1. PER-DEFECT RECALL
+# ------------------------------------------------------------
+
+print(&quot;\nPercentage correctly detected for each defect category&quot;)
+print(&quot;-&quot; * 55)
+
+# Note: Make sure to execute the cell containing &#x27;test_results = best_model.val(...)&#x27; first!
+if &#x27;test_results&#x27; not in globals():
+    print(&quot;WARNING: &#x27;test_results&#x27; is not defined in the current session. Please run the cell above to compute validation results.&quot;)
+else:
+    for i, class_name in enumerate(class_names):
+        if (
+            hasattr(test_results, &quot;ap_class_index&quot;)
+            and i in list(test_results.ap_class_index)
+        ):
+            eval_idx = list(test_results.ap_class_index).index(i)
+            recall = test_results.box.r[eval_idx] * 100
+            print(f&quot;{class_name}: {recall:.2f}%&quot;)
+        else:
+            print(f&quot;{class_name}: N/A (No evaluated test instances)&quot;)
+
+
+# ------------------------------------------------------------
+# 2. PACKAGE-LEVEL FAULT DETECTION ACCURACY
+# ------------------------------------------------------------
+# Ground truth:
+#   Faulty     = CSV contains at least one defect annotation
+#   Error-free = CSV has no defect annotation for that image
+#
+# Prediction:
+#   Faulty     = YOLO predicts at least one defect above threshold
+#   Error-free = YOLO predicts no defects above threshold
+#
+# Note: TEST_DIR contains the original test images and
+# exactly one CSV annotation file.
+
+def find_csv(folder):
+    csv_files = list(folder.glob(&quot;*.csv&quot;))
+
+    if len(csv_files) != 1:
+        raise ValueError(
+            f&quot;Expected one CSV in {folder}, found {len(csv_files)}&quot;
+        )
+
+    return csv_files[0]
+
+csv_path = find_csv(TEST_DIR)
+df = pd.read_csv(csv_path)
+
+required_columns = {&quot;filename&quot;, &quot;class&quot;}
+if not required_columns.issubset(df.columns):
+    raise ValueError(f&quot;CSV must contain {required_columns}&quot;)
+
+# An image is faulty if it has one or more annotated defects.
+df[&quot;image_name&quot;] = df[&quot;filename&quot;].astype(str).map(
+    lambda x: Path(x.strip()).name.lower()
+)
+
+ground_truth = (
+    df.groupby(&quot;image_name&quot;)[&quot;class&quot;]
+    .apply(lambda classes: classes.notna().any())
+    .to_dict()
+)
+
+# Include error-free images in the test set.
+# Images with no CSV annotation row are treated as error-free,
+# so the CSV must represent all test images for this to be valid.
+test_images = [
+    p for p in TEST_DIR.iterdir()
+    if p.is_file() and p.suffix.lower() in {&quot;.jpg&quot;, &quot;.jpeg&quot;, &quot;.png&quot;}
+]
+
+correct = 0
+tp_faulty = 0
+tn_error_free = 0
+fp_error_free = 0
+fn_faulty = 0
+evaluated = 0
+
+for image_path in test_images:
+    image_name = image_path.name.lower()
+
+    # Ground-truth package status
+    actual_faulty = ground_truth.get(image_name, False)
+
+    # Predict defects in the image
+    if &#x27;best_model&#x27; not in globals():
+        print(&quot;ERROR: &#x27;best_model&#x27; is not defined. Please run the model loading cell above first.&quot;)
+        break
+
+    results = best_model.predict(
+        source=str(image_path),
+        conf=CONF_THRESHOLD,
+        verbose=False
+    )
+
+    predicted_faulty = (
+        results[0].boxes is not None
+        and len(results[0].boxes) &gt; 0
+    )
+
+    evaluated += 1
+
+    if actual_faulty == predicted_faulty:
+        correct += 1
+
+    if actual_faulty and predicted_faulty:
+        tp_faulty += 1
+    elif not actual_faulty and not predicted_faulty:
+        tn_error_free += 1
+    elif not actual_faulty and predicted_faulty:
+        fp_error_free += 1
+    else:
+        fn_faulty += 1
+
+if evaluated &gt; 0:
+    package_accuracy = 100 * correct / evaluated
+
+    print(&quot;\nPACKAGE-LEVEL FAULT DETECTION&quot;)
+    print(&quot;-&quot; * 55)
+    print(f&quot;Confidence threshold: {CONF_THRESHOLD}&quot;)
+    print(f&quot;Images evaluated: {evaluated}&quot;)
+    print(f&quot;Correct package decisions: {correct}&quot;)
+    print(f&quot;Package-level accuracy: {package_accuracy:.2f}%&quot;)
+
+    print(&quot;\nBreakdown&quot;)
+    print(f&quot;Faulty packages correctly identified: {tp_faulty}&quot;)
+    print(f&quot;Error-free packages correctly identified: {tn_error_free}&quot;)
+    print(f&quot;False alarms on error-free packages: {fp_error_free}&quot;)
+    print(f&quot;Faulty packages missed: {fn_faulty}&quot;)
+else:
+    print(&quot;\nNo test images were evaluated. Please check that TEST_DIR contains valid images.&quot;)</code></pre>
+  </details>
+</article>
+<footer>Documentation generated from finalyyolodirect.py.</footer>
+</main>
+</body>
+</html>
