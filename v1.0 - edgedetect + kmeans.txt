@@ -1,0 +1,3 @@
+canny edge detection -> SLIC superpixel segmentation-> calculate mean colour -> K means ->Cluster Assigning
+K means currently uses a new scheme for every image - change to have same scheme over all images 
+
